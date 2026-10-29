@@ -431,77 +431,68 @@ class eee(ContinualModel):
 
         return group
 
-    def _evaluate_expert_capacity(self, moments_list, top_k=32, beta=1.0) -> bool:
-        diagnostics = {}
+    def _evaluate_expert_capacity(self, moments_list, beta=1.0) -> bool:
+        """
+        Directional saturation check within the current expert.
 
-        # ===== metric: response =====
-        # calculate the cross response between each historical moment to other moments
-        responses = []
-        for i, M_i in enumerate(moments_list):
-            task_responses = []
-            for j, M_j in enumerate(moments_list):
-                if i == j:
-                    continue
-                # M_i to M_j
-                try:
-                    eigvals_j, eigvecs_j = torch.linalg.eigh(M_j)
+        For every ordered task pair (i, j), i != j, compute
+            rho_{j->i} = tr(Q_i^T M_j Q_i) / tr(Q_i^T M_i Q_i),
+        where Q_i is the top-k eigenspace of M_i. Pairs with i < j
+        (newer task j -> older task i) form the cross set, while pairs
+        with i > j (older task j -> newer task i) form the reference set.
+        The expert is saturated when the average cross ratio reaches
+        beta times the average reference ratio.
 
-                    k = min(16, eigvals_j.size(0) // 4)
-                    principal_j = eigvecs_j[:, -k:]  # [D, k]
+        Returns:
+            True if the expert can still accept another task.
+        """
+        n = len(moments_list)
+        if n < 2:
+            return True
 
-                    # tr(P_j^T M_i P_j)
-                    resp = torch.trace(principal_j.T @ M_i @ principal_j) / k
-                    task_responses.append(resp.item())
-                except:
-                    task_responses.append(0.0)
-            responses.append(task_responses)
+        k = min(16, moments_list[0].size(0) // 4)
+        if k <= 0:
+            return True
 
-        # calculate cross response ratio R_ij = response(M_i, task_j) / response(M_j, task_j)
-        # Ideally, the moment of task i should exhibit the strongest response to task i itself.
-        # Upon saturation, this "self-response advantage" diminishes.
-        self_ratios = []
+        # Cache the principal subspace and self-response of every task.
+        principal = {}
+        self_resp = {}
+        for idx, M in enumerate(moments_list):
+            try:
+                _, eigvecs = torch.linalg.eigh(M)
+            except Exception:
+                continue
+            P = eigvecs[:, -k:]
+            principal[idx] = P
+            self_resp[idx] = torch.trace(P.T @ M @ P).item() / k
+
         cross_ratios = []
+        reference_ratios = []
 
-        for i in range(len(moments_list)):
-            for j in range(len(moments_list)):
+        for i, P_i in principal.items():
+            denom = self_resp[i] + 1e-8
+            for j in principal:
                 if i == j:
                     continue
-                # self response
-                try:
-                    eigvals_i, eigvecs_i = torch.linalg.eigh(moments_list[i])
-                    k = min(16, eigvals_i.size(0) // 4)
-                    principal_i = eigvecs_i[:, -k:]
-                    self_resp = torch.trace(principal_i.T @ moments_list[i] @ principal_i) / k
+                cross_resp = torch.trace(P_i.T @ moments_list[j] @ P_i).item() / k
+                ratio = cross_resp / denom
+                if i < j:
+                    cross_ratios.append(ratio)
+                else:
+                    reference_ratios.append(ratio)
 
-                    # cross response
-                    cross_resp = torch.trace(principal_i.T @ moments_list[j] @ principal_i) / k
+        if not cross_ratios or not reference_ratios:
+            return True
 
-                    ratio = cross_resp.item() / (self_resp.item() + 1e-8)
-                    if i < j:
-                        cross_ratios.append(ratio)
-                    else:
-                        self_ratios.append(ratio)
-                except:
-                    continue
+        avg_cross = float(np.mean(cross_ratios))
+        avg_reference = float(np.mean(reference_ratios))
 
+        print(f"[Saturation] Task {self.current_task + 1}: "
+              f"avg_cross_ratio={avg_cross:.3f}, "
+              f"avg_reference_ratio={beta * avg_reference:.3f}, "
+              f"{'🔴 SATURATED' if avg_cross >= beta * avg_reference else '🟢 OK'}")
 
-        if len(cross_ratios) > 0 and len(self_ratios) > 0:
-            avg_cross = np.mean(cross_ratios)
-            avg_self = np.mean(self_ratios)
-            # When cross_ratio approaches self_ratio, the tasks become difficult to distinguish.
-            divergence = avg_cross / (avg_self + 1e-8)
-            diagnostics['divergence'] = divergence
-            diagnostics['avg_cross_ratio'] = avg_cross
-            diagnostics['avg_self_ratio'] = avg_self
-        else:
-            divergence = 0.0
-
-        print(f"[Divergence] Task {self.current_task + 1}: "
-              f"avg_cross_ratio={diagnostics['avg_cross_ratio']:.3f}, "
-              f"avg_self_ratio={beta * diagnostics['avg_self_ratio']:.3f}, "
-              f"{'🔴 SATURATED' if diagnostics['avg_cross_ratio'] >= beta * diagnostics['avg_self_ratio'] else '🟢 OK'}")
-
-        return diagnostics['avg_cross_ratio'] < beta * diagnostics['avg_self_ratio']
+        return avg_cross < beta * avg_reference  
 
 
 
