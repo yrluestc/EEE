@@ -7,6 +7,6 @@ python main.py --dataset seq-imagenet-r --model eee --lr 0.03 --batch_size 32 --
       --reg_his True --reg_cur True --if_fallback True\
       --if_gradproj True --if_GAPP True --if_partition True \
       --if_freeze_old_classes True \
-      --device 0 \
-      > EEE_test2_INR10.out 2>&1 &
+      --device 0 #\
+      #> EEE_test2_INR10.out 2>&1 &
 
