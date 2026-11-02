@@ -8,7 +8,7 @@ Official implementation of NeurIPS2026 paper "Class-Incremental Learning via LoR
 ```bash
 conda create -n eee python=3.10
 conda activate eee
-pip install -r requirements.txt (wait a moment)
+pip install -r requirements.txt (may need to change the torch version)
 ```
 
 ### **2. Run the example training script**
