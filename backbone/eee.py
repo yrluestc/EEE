@@ -58,7 +58,7 @@ class eee(MammothBackbone):
 
         super(eee, self).__init__()
 
-        self.device = 'cuda:2'
+        self.device = 'cuda:0'
 
         #self.num_classes = num_classes
 
